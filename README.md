@@ -12,6 +12,25 @@ manual "resume" click in the Supabase dashboard to wake back up. Your data
 isn't lost when that happens - it just needs that one click before the app
 works again.
 
+## Already have this running? Read this first
+
+If you've already created a Supabase project and run the earlier
+`schema.sql`, don't run `schema.sql` again - open
+**SQL Editor -> New query**, paste in `supabase/migration_v2.sql` instead,
+and click **Run**. It upgrades your existing tables in place (nothing is
+lost - any bills you'd already marked "settled" are carried forward as
+payment records) and adds what's new in this version:
+
+- **Settle in full or in part.** A new **What I Owe** tab shows the total
+  you currently owe and lets you record a payment of any amount - pay it
+  all off, or knock off part of it - instead of settling each bill one by
+  one.
+- **Edit and delete.** Bills, pocket money entries, and payment records can
+  all be edited or deleted after the fact, not just added.
+
+Then pull the updated `js/app.js` (and this README) into your project folder
+and push to GitHub as usual - see "Updating the app later" below.
+
 ## Overview of what you're setting up
 
 1. A Supabase project (free) - the database, login system, and photo storage.
@@ -30,9 +49,13 @@ works again.
 1. In your new project, open **SQL Editor** (left sidebar) -> **New query**.
 2. Open `supabase/schema.sql` from this folder, copy its entire contents,
    paste into the SQL Editor, and click **Run**.
-3. This creates the `profiles`, `pocket_money`, and `reimbursements` tables,
-   all the access-control rules, the dashboard summary function, and a
-   private `receipts` storage bucket for photos.
+3. This creates the `profiles`, `pocket_money`, `reimbursements`, and
+   `settlements` tables, all the access-control rules, the dashboard summary
+   function, and a private `receipts` storage bucket for photos.
+
+   (Upgrading an existing project instead of starting fresh? Use
+   `supabase/migration_v2.sql` here instead - see "Already have this running?
+   Read this first" above.)
 
 ## Step 3: Create the two accounts
 
@@ -126,22 +149,30 @@ GitHub Pages picks up the new version automatically within a minute or two.
 ## Project structure
 
 ```
-index.html              - page shell (login screen + app shell)
-css/style.css           - small additions on top of Tailwind (loaded via CDN)
-js/supabaseClient.js    - your project URL + anon key (fill in Step 4)
-js/app.js               - all app logic: auth, bills, pocket money, dashboard
-manifest.json           - lets you "Add to Home Screen" on mobile
-supabase/schema.sql     - run once in the Supabase SQL Editor (Step 2)
+index.html               - page shell (login screen + app shell)
+css/style.css            - small additions on top of Tailwind (loaded via CDN)
+js/supabaseClient.js     - your project URL + anon key (fill in Step 4)
+js/app.js                - all app logic: auth, bills, payments, dashboard
+manifest.json            - lets you "Add to Home Screen" on mobile
+supabase/schema.sql      - run once, for a BRAND NEW Supabase project
+supabase/migration_v2.sql- run once, to upgrade an EXISTING Supabase project
 ```
 
-## How the ledger works (unchanged from before)
+## How the ledger works
 
 Two separate tracks: pocket money is a running log you add to whenever you
 hand over allowance - nothing to settle, just a record. Reimbursements are
-bills your brother submits (with an optional photo); each is `pending` (you
-owe him) or `settled` (you've paid him back), settleable one at a time or all
-at once. The dashboard shows, as of any day you pick, pocket money given,
-amount still pending, and amount already settled.
+bills your brother submits (with an optional photo) - there's no per-bill
+"settled" status; what's owed is simply the total of all bills minus the
+total of all payments you've recorded.
+
+The **What I Owe** tab shows that running total and lets you record a
+payment against it: the full amount, or any smaller amount for a partial
+payment. Payments aren't tied to specific bills, so you don't need to match
+them up - pay off a chunk whenever you like and the total owed drops
+accordingly. Every bill, pocket money entry, and payment record can be
+edited or deleted later if you make a mistake. The Dashboard tab still shows
+totals as of any day you pick, for a historical view.
 
 ## Things worth knowing
 
@@ -151,6 +182,12 @@ amount still pending, and amount already settled.
 - **Deleted bills leave the photo file behind** in storage (harmless, just
   slightly wastes your free storage quota over time - 1GB is a lot of
   receipt photos, so this is unlikely to matter for a two-person app).
+- **Editing a bill doesn't let you swap its photo.** You can change the
+  amount, description, or date; to change the photo, delete the bill and
+  submit a new one.
+- **Deleting a payment record puts that amount back into what's owed** -
+  useful for correcting a mistaken entry, but worth double-checking before
+  you confirm the delete.
 - **No "forgot password" flow is wired up in the UI.** If someone forgets
   their password, reset it from the Supabase dashboard (Authentication ->
   Users -> select the user -> send a password reset, or set a new one

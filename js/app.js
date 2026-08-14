@@ -6,6 +6,9 @@ const state = {
   profile: null,    // { id, role, display_name }
   currencySymbol: '₹',
   activeTab: null,
+  editingBillId: null,
+  editingPmId: null,
+  editingSettlementId: null,
 };
 
 const $main = document.getElementById('main-content');
@@ -44,13 +47,6 @@ function openLightbox(src) {
   document.getElementById('lightbox-img').src = src;
   document.getElementById('lightbox').classList.remove('hidden');
   document.getElementById('lightbox').classList.add('flex');
-}
-
-function statusBadge(status) {
-  if (status === 'settled') {
-    return `<span class="text-xs font-medium bg-green-100 text-green-700 px-2 py-0.5 rounded-full">Settled</span>`;
-  }
-  return `<span class="text-xs font-medium bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">Pending</span>`;
 }
 
 function escapeHtml(str) {
@@ -136,6 +132,7 @@ function buildTabBar() {
     ? [
         { id: 'dashboard', label: 'Dashboard' },
         { id: 'history', label: 'Bills' },
+        { id: 'owe', label: 'What I Owe' },
         { id: 'pocket', label: 'Pocket Money' },
       ]
     : [
@@ -160,6 +157,7 @@ function switchTab(tabId) {
 
   if (tabId === 'dashboard') renderDashboard();
   else if (tabId === 'history') renderHistory();
+  else if (tabId === 'owe') renderOwe();
   else if (tabId === 'pocket') renderPocketMoney();
   else if (tabId === 'upload') renderUploadForm();
 }
@@ -191,12 +189,11 @@ async function renderDashboard() {
       </div>
       <div class="card">
         <p class="text-xs text-slate-500">You owe him</p>
-        <p class="text-xl font-semibold mt-1 text-amber-600">${fmtMoney(summary.reimbursement_pending)}</p>
-        <p class="text-xs text-slate-400 mt-0.5">${summary.pending_count} bill${summary.pending_count === 1 ? '' : 's'} pending</p>
+        <p class="text-xl font-semibold mt-1 text-amber-600">${fmtMoney(summary.amount_owed)}</p>
       </div>
       <div class="card">
-        <p class="text-xs text-slate-500">Already settled</p>
-        <p class="text-xl font-semibold mt-1 text-green-600">${fmtMoney(summary.reimbursement_settled)}</p>
+        <p class="text-xs text-slate-500">Paid back so far</p>
+        <p class="text-xl font-semibold mt-1 text-green-600">${fmtMoney(summary.settlement_total)}</p>
       </div>
       <div class="card">
         <p class="text-xs text-slate-500">All bills submitted</p>
@@ -204,9 +201,9 @@ async function renderDashboard() {
       </div>
     </div>
 
-    ${summary.reimbursement_pending > 0 ? `
-      <button id="settle-all-btn" class="w-full bg-indigo-600 text-white rounded-lg py-3 font-medium active:bg-indigo-700">
-        Settle all pending (${fmtMoney(summary.reimbursement_pending)})
+    ${summary.amount_owed > 0 ? `
+      <button id="go-to-owe-btn" class="w-full bg-indigo-600 text-white rounded-lg py-3 font-medium active:bg-indigo-700">
+        Settle up (${fmtMoney(summary.amount_owed)} owed)
       </button>
     ` : ''}
   `;
@@ -216,17 +213,9 @@ async function renderDashboard() {
     renderDashboard();
   });
 
-  const settleAllBtn = document.getElementById('settle-all-btn');
-  if (settleAllBtn) {
-    settleAllBtn.addEventListener('click', async () => {
-      if (!confirm('Mark all pending bills as settled?')) return;
-      const { error: updErr, count } = await sb.from('reimbursements')
-        .update({ status: 'settled', settled_at: new Date().toISOString(), settled_by: state.user.id }, { count: 'exact' })
-        .eq('status', 'pending');
-      if (updErr) { showToast(updErr.message, true); return; }
-      showToast(`Settled ${count ?? 'all'} bill(s)`);
-      renderDashboard();
-    });
+  const goToOweBtn = document.getElementById('go-to-owe-btn');
+  if (goToOweBtn) {
+    goToOweBtn.addEventListener('click', () => switchTab('owe'));
   }
 }
 
@@ -306,14 +295,25 @@ function renderUploadForm() {
 
 /* ---------------- History (reimbursements list, shared by both roles) ---------------- */
 
+function billEditFormHtml(item) {
+  return `
+    <div class="flex-1 min-w-0 space-y-2">
+      <input type="number" step="0.01" min="0.01" class="edit-amount w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm" value="${item.amount}" />
+      <input type="text" class="edit-description w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm" value="${escapeHtml(item.description)}" maxlength="200" />
+      <input type="date" class="edit-date w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm" value="${item.date}" max="${todayISO()}" />
+      <div class="flex gap-2">
+        <button class="save-bill-btn text-xs bg-indigo-600 text-white px-3 py-1 rounded-full">Save</button>
+        <button class="cancel-bill-btn text-xs bg-slate-200 text-slate-700 px-3 py-1 rounded-full">Cancel</button>
+      </div>
+    </div>
+  `;
+}
+
 async function renderHistory() {
-  const filter = state.historyFilter || 'all';
   $main.innerHTML = `<p class="text-slate-400 text-sm">Loading...</p>`;
 
-  let query = sb.from('reimbursements').select('*').order('date', { ascending: false }).order('id', { ascending: false });
-  if (filter !== 'all') query = query.eq('status', filter);
-
-  const { data: items, error } = await query;
+  const { data: items, error } = await sb.from('reimbursements').select('*')
+    .order('date', { ascending: false }).order('id', { ascending: false });
   if (error) {
     $main.innerHTML = `<p class="text-red-600">${escapeHtml(error.message)}</p>`;
     return;
@@ -335,72 +335,81 @@ async function renderHistory() {
     }));
   }
 
-  const filterBar = `
-    <div class="flex gap-2 text-sm">
-      ${['all', 'pending', 'settled'].map(f => `
-        <button data-filter="${f}"
-          class="filter-btn px-3 py-1.5 rounded-full border ${filter === f ? 'bg-indigo-600 text-white border-indigo-600' : 'border-slate-300 text-slate-600'}">
-          ${f[0].toUpperCase()}${f.slice(1)}
-        </button>
-      `).join('')}
+  const total = items.reduce((sum, i) => sum + Number(i.amount), 0);
+
+  const list = items.length ? items.map(item => {
+    const canEdit = isPayer || item.uploaded_by === state.user.id;
+    const isEditing = state.editingBillId === item.id;
+
+    return `
+    <div class="card flex gap-3" data-id="${item.id}">
+      ${!isEditing && item.image_path && signedUrlByPath[item.image_path] ? `
+        <img src="${signedUrlByPath[item.image_path]}" class="w-16 h-16 rounded-lg object-cover flex-shrink-0 cursor-pointer thumb" />
+      ` : !isEditing ? `<div class="w-16 h-16 rounded-lg bg-slate-100 flex items-center justify-center text-slate-300 flex-shrink-0">-</div>` : ''}
+
+      ${isEditing ? billEditFormHtml(item) : `
+        <div class="flex-1 min-w-0">
+          <p class="font-medium truncate">${escapeHtml(item.description)}</p>
+          <p class="text-sm text-slate-500">${fmtDate(item.date)}${isPayer ? ` · ${escapeHtml(nameById[item.uploaded_by] || '')}` : ''}</p>
+          <p class="font-semibold mt-1">${fmtMoney(item.amount)}</p>
+          <div class="flex gap-2 mt-2">
+            ${canEdit ? `<button class="edit-bill-btn text-xs bg-slate-200 text-slate-700 px-3 py-1 rounded-full">Edit</button>` : ''}
+            ${canEdit ? `<button class="delete-bill-btn text-xs bg-red-50 text-red-600 px-3 py-1 rounded-full">Delete</button>` : ''}
+          </div>
+        </div>
+      `}
     </div>
   `;
+  }).join('') : `<p class="text-slate-400 text-sm text-center py-8">No bills here yet.</p>`;
 
-  const list = items.length ? items.map(item => `
-    <div class="card flex gap-3" data-id="${item.id}">
-      ${item.image_path && signedUrlByPath[item.image_path] ? `
-        <img src="${signedUrlByPath[item.image_path]}" class="w-16 h-16 rounded-lg object-cover flex-shrink-0 cursor-pointer thumb" />
-      ` : `<div class="w-16 h-16 rounded-lg bg-slate-100 flex items-center justify-center text-slate-300 flex-shrink-0">-</div>`}
-      <div class="flex-1 min-w-0">
-        <div class="flex items-start justify-between gap-2">
-          <p class="font-medium truncate">${escapeHtml(item.description)}</p>
-          ${statusBadge(item.status)}
-        </div>
-        <p class="text-sm text-slate-500">${fmtDate(item.date)}${isPayer ? ` · ${escapeHtml(nameById[item.uploaded_by] || '')}` : ''}</p>
-        <p class="font-semibold mt-1">${fmtMoney(item.amount)}</p>
-        ${item.status === 'settled' ? `<p class="text-xs text-slate-400 mt-0.5">Settled ${fmtDate(item.settled_at)}${item.settled_by && nameById[item.settled_by] ? ` by ${escapeHtml(nameById[item.settled_by])}` : ''}</p>` : ''}
-        <div class="flex gap-2 mt-2">
-          ${isPayer && item.status === 'pending' ? `<button class="settle-btn text-xs bg-indigo-600 text-white px-3 py-1 rounded-full">Settle</button>` : ''}
-          ${isPayer && item.status === 'settled' ? `<button class="unsettle-btn text-xs bg-slate-200 text-slate-700 px-3 py-1 rounded-full">Undo</button>` : ''}
-          ${item.status === 'pending' ? `<button class="delete-btn text-xs bg-red-50 text-red-600 px-3 py-1 rounded-full">Delete</button>` : ''}
-        </div>
-      </div>
+  $main.innerHTML = `
+    <div class="card flex items-center justify-between">
+      <p class="text-sm text-slate-500">${items.length} bill${items.length === 1 ? '' : 's'} total</p>
+      <p class="font-semibold">${fmtMoney(total)}</p>
     </div>
-  `).join('') : `<p class="text-slate-400 text-sm text-center py-8">No bills here yet.</p>`;
+    <div class="space-y-3">${list}</div>
+  `;
 
-  $main.innerHTML = `${filterBar}<div class="space-y-3">${list}</div>`;
-
-  $main.querySelectorAll('.filter-btn').forEach(btn => {
-    btn.addEventListener('click', () => { state.historyFilter = btn.dataset.filter; renderHistory(); });
-  });
   $main.querySelectorAll('.thumb').forEach(img => {
     img.addEventListener('click', () => openLightbox(img.src));
   });
-  $main.querySelectorAll('.settle-btn').forEach(btn => {
-    btn.addEventListener('click', async (e) => {
-      const id = e.target.closest('[data-id]').dataset.id;
-      const { error } = await sb.from('reimbursements')
-        .update({ status: 'settled', settled_at: new Date().toISOString(), settled_by: state.user.id })
-        .eq('id', id);
-      if (error) { showToast(error.message, true); return; }
-      showToast('Marked settled');
+
+  $main.querySelectorAll('.edit-bill-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      state.editingBillId = Number(e.target.closest('[data-id]').dataset.id);
       renderHistory();
     });
   });
-  $main.querySelectorAll('.unsettle-btn').forEach(btn => {
-    btn.addEventListener('click', async (e) => {
-      const id = e.target.closest('[data-id]').dataset.id;
-      const { error } = await sb.from('reimbursements')
-        .update({ status: 'pending', settled_at: null, settled_by: null })
-        .eq('id', id);
-      if (error) { showToast(error.message, true); return; }
-      showToast('Reverted to pending');
+
+  $main.querySelectorAll('.cancel-bill-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      state.editingBillId = null;
       renderHistory();
     });
   });
-  $main.querySelectorAll('.delete-btn').forEach(btn => {
+
+  $main.querySelectorAll('.save-bill-btn').forEach(btn => {
     btn.addEventListener('click', async (e) => {
-      if (!confirm('Delete this bill?')) return;
+      const card = e.target.closest('[data-id]');
+      const id = card.dataset.id;
+      const amount = parseFloat(card.querySelector('.edit-amount').value);
+      const description = card.querySelector('.edit-description').value.trim();
+      const date = card.querySelector('.edit-date').value;
+
+      if (!amount || amount <= 0) { showToast('Enter a valid amount', true); return; }
+      if (!description) { showToast('Description cannot be empty', true); return; }
+
+      const { error } = await sb.from('reimbursements').update({ amount, description, date }).eq('id', id);
+      if (error) { showToast(error.message, true); return; }
+      showToast('Bill updated');
+      state.editingBillId = null;
+      renderHistory();
+    });
+  });
+
+  $main.querySelectorAll('.delete-bill-btn').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      if (!confirm('Delete this bill? This cannot be undone.')) return;
       const id = e.target.closest('[data-id]').dataset.id;
       const { error } = await sb.from('reimbursements').delete().eq('id', id);
       if (error) { showToast(error.message, true); return; }
@@ -410,7 +419,171 @@ async function renderHistory() {
   });
 }
 
+/* ---------------- Payer: What I Owe (settle in full or in part) ---------------- */
+
+function settlementEditFormHtml(item) {
+  return `
+    <div class="flex-1 min-w-0 space-y-2">
+      <input type="number" step="0.01" min="0.01" class="edit-settlement-amount w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm" value="${item.amount}" />
+      <input type="date" class="edit-settlement-date w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm" value="${item.date}" max="${todayISO()}" />
+      <input type="text" class="edit-settlement-note w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm" value="${escapeHtml(item.note || '')}" placeholder="Note (optional)" maxlength="200" />
+      <div class="flex gap-2">
+        <button class="save-settlement-btn text-xs bg-indigo-600 text-white px-3 py-1 rounded-full">Save</button>
+        <button class="cancel-settlement-btn text-xs bg-slate-200 text-slate-700 px-3 py-1 rounded-full">Cancel</button>
+      </div>
+    </div>
+  `;
+}
+
+async function renderOwe() {
+  $main.innerHTML = `<p class="text-slate-400 text-sm">Loading...</p>`;
+
+  const [{ data: summaryRows, error: summaryErr }, { data: settlements, error: settleErr }, { data: profiles }] = await Promise.all([
+    sb.rpc('get_summary', { as_of: todayISO() }),
+    sb.from('settlements').select('*').order('date', { ascending: false }).order('id', { ascending: false }),
+    sb.from('profiles').select('id, display_name'),
+  ]);
+
+  if (summaryErr || settleErr) {
+    $main.innerHTML = `<p class="text-red-600">${escapeHtml((summaryErr || settleErr).message)}</p>`;
+    return;
+  }
+
+  const owed = summaryRows[0].amount_owed;
+  const nameById = Object.fromEntries((profiles || []).map(p => [p.id, p.display_name]));
+
+  const settlementsList = settlements.length ? settlements.map(s => {
+    const isEditing = state.editingSettlementId === s.id;
+    return `
+    <div class="card flex gap-3" data-id="${s.id}">
+      ${isEditing ? settlementEditFormHtml(s) : `
+        <div class="flex-1 min-w-0">
+          <p class="font-semibold">${fmtMoney(s.amount)}</p>
+          <p class="text-sm text-slate-500">${fmtDate(s.date)}${s.note ? ` · ${escapeHtml(s.note)}` : ''}</p>
+          <div class="flex gap-2 mt-2">
+            <button class="edit-settlement-btn text-xs bg-slate-200 text-slate-700 px-3 py-1 rounded-full">Edit</button>
+            <button class="delete-settlement-btn text-xs bg-red-50 text-red-600 px-3 py-1 rounded-full">Delete</button>
+          </div>
+        </div>
+      `}
+    </div>
+  `;
+  }).join('') : `<p class="text-slate-400 text-sm text-center py-6">No payments recorded yet.</p>`;
+
+  $main.innerHTML = `
+    <div class="card">
+      <p class="text-xs text-slate-500">You currently owe him</p>
+      <p class="text-2xl font-semibold mt-1 text-amber-600">${fmtMoney(owed)}</p>
+    </div>
+
+    ${owed > 0 ? `
+      <div class="card">
+        <h2 class="font-semibold mb-3">Record a payment</h2>
+        <p class="text-xs text-slate-500 mb-3">Pay it off in full, or enter a smaller amount for a partial payment.</p>
+        <form id="settle-form" class="space-y-3">
+          <div>
+            <label class="block text-sm font-medium mb-1">Amount</label>
+            <input type="number" step="0.01" min="0.01" max="${owed}" name="amount" required value="${owed}"
+              class="w-full rounded-lg border border-slate-300 px-3 py-2.5" />
+          </div>
+          <div>
+            <label class="block text-sm font-medium mb-1">Date</label>
+            <input type="date" name="date" required value="${todayISO()}" max="${todayISO()}"
+              class="w-full rounded-lg border border-slate-300 px-3 py-2.5" />
+          </div>
+          <div>
+            <label class="block text-sm font-medium mb-1">Note (optional)</label>
+            <input type="text" name="note" maxlength="200" placeholder="e.g. Paid via UPI"
+              class="w-full rounded-lg border border-slate-300 px-3 py-2.5" />
+          </div>
+          <button type="submit" class="w-full bg-indigo-600 text-white rounded-lg py-3 font-medium active:bg-indigo-700">
+            Record payment
+          </button>
+        </form>
+      </div>
+    ` : `<p class="text-sm text-slate-400 text-center">Nothing outstanding right now.</p>`}
+
+    <div>
+      <h2 class="font-semibold mb-2 px-1">Payment history</h2>
+      <div class="space-y-3">${settlementsList}</div>
+    </div>
+  `;
+
+  const settleForm = document.getElementById('settle-form');
+  if (settleForm) {
+    settleForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const fd = new FormData(settleForm);
+      const amount = parseFloat(fd.get('amount'));
+      const date = fd.get('date');
+      const note = fd.get('note').trim() || null;
+
+      if (!amount || amount <= 0) { showToast('Enter a valid amount', true); return; }
+      if (amount > owed + 0.001) { showToast(`Amount can't exceed what's owed (${fmtMoney(owed)})`, true); return; }
+
+      const { error } = await sb.from('settlements').insert({ amount, date, note, created_by: state.user.id });
+      if (error) { showToast(error.message, true); return; }
+      showToast(amount >= owed ? 'Fully settled' : 'Partial payment recorded');
+      renderOwe();
+    });
+  }
+
+  $main.querySelectorAll('.edit-settlement-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      state.editingSettlementId = Number(e.target.closest('[data-id]').dataset.id);
+      renderOwe();
+    });
+  });
+  $main.querySelectorAll('.cancel-settlement-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      state.editingSettlementId = null;
+      renderOwe();
+    });
+  });
+  $main.querySelectorAll('.save-settlement-btn').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      const card = e.target.closest('[data-id]');
+      const id = card.dataset.id;
+      const amount = parseFloat(card.querySelector('.edit-settlement-amount').value);
+      const date = card.querySelector('.edit-settlement-date').value;
+      const note = card.querySelector('.edit-settlement-note').value.trim() || null;
+
+      if (!amount || amount <= 0) { showToast('Enter a valid amount', true); return; }
+
+      const { error } = await sb.from('settlements').update({ amount, date, note }).eq('id', id);
+      if (error) { showToast(error.message, true); return; }
+      showToast('Payment updated');
+      state.editingSettlementId = null;
+      renderOwe();
+    });
+  });
+  $main.querySelectorAll('.delete-settlement-btn').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      if (!confirm('Delete this payment record? The amount will go back to being owed.')) return;
+      const id = e.target.closest('[data-id]').dataset.id;
+      const { error } = await sb.from('settlements').delete().eq('id', id);
+      if (error) { showToast(error.message, true); return; }
+      showToast('Deleted');
+      renderOwe();
+    });
+  });
+}
+
 /* ---------------- Payer: Pocket money ---------------- */
+
+function pmEditFormHtml(pm) {
+  return `
+    <div class="flex-1 min-w-0 space-y-2">
+      <input type="number" step="0.01" min="0.01" class="edit-pm-amount w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm" value="${pm.amount}" />
+      <input type="date" class="edit-pm-date w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm" value="${pm.date}" max="${todayISO()}" />
+      <input type="text" class="edit-pm-note w-full rounded-lg border border-slate-300 px-2 py-1.5 text-sm" value="${escapeHtml(pm.note || '')}" placeholder="Note (optional)" maxlength="200" />
+      <div class="flex gap-2">
+        <button class="save-pm-btn text-xs bg-indigo-600 text-white px-3 py-1 rounded-full">Save</button>
+        <button class="cancel-pm-btn text-xs bg-slate-200 text-slate-700 px-3 py-1 rounded-full">Cancel</button>
+      </div>
+    </div>
+  `;
+}
 
 async function renderPocketMoney() {
   $main.innerHTML = `<p class="text-slate-400 text-sm">Loading...</p>`;
@@ -421,15 +594,23 @@ async function renderPocketMoney() {
     return;
   }
 
-  const list = items.length ? items.map(pm => `
+  const list = items.length ? items.map(pm => {
+    const isEditing = state.editingPmId === pm.id;
+    return `
     <div class="card flex items-center justify-between" data-id="${pm.id}">
-      <div>
-        <p class="font-medium">${fmtMoney(pm.amount)}</p>
-        <p class="text-sm text-slate-500">${fmtDate(pm.date)}${pm.note ? ` · ${escapeHtml(pm.note)}` : ''}</p>
-      </div>
-      <button class="pm-delete-btn text-xs bg-red-50 text-red-600 px-3 py-1 rounded-full">Delete</button>
+      ${isEditing ? pmEditFormHtml(pm) : `
+        <div>
+          <p class="font-medium">${fmtMoney(pm.amount)}</p>
+          <p class="text-sm text-slate-500">${fmtDate(pm.date)}${pm.note ? ` · ${escapeHtml(pm.note)}` : ''}</p>
+        </div>
+        <div class="flex gap-2">
+          <button class="edit-pm-btn text-xs bg-slate-200 text-slate-700 px-3 py-1 rounded-full">Edit</button>
+          <button class="pm-delete-btn text-xs bg-red-50 text-red-600 px-3 py-1 rounded-full">Delete</button>
+        </div>
+      `}
     </div>
-  `).join('') : `<p class="text-slate-400 text-sm text-center py-8">No pocket money logged yet.</p>`;
+  `;
+  }).join('') : `<p class="text-slate-400 text-sm text-center py-8">No pocket money logged yet.</p>`;
 
   $main.innerHTML = `
     <div class="card">
@@ -471,6 +652,35 @@ async function renderPocketMoney() {
     renderPocketMoney();
   });
 
+  $main.querySelectorAll('.edit-pm-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      state.editingPmId = Number(e.target.closest('[data-id]').dataset.id);
+      renderPocketMoney();
+    });
+  });
+  $main.querySelectorAll('.cancel-pm-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      state.editingPmId = null;
+      renderPocketMoney();
+    });
+  });
+  $main.querySelectorAll('.save-pm-btn').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      const card = e.target.closest('[data-id]');
+      const id = card.dataset.id;
+      const amount = parseFloat(card.querySelector('.edit-pm-amount').value);
+      const date = card.querySelector('.edit-pm-date').value;
+      const note = card.querySelector('.edit-pm-note').value.trim() || null;
+
+      if (!amount || amount <= 0) { showToast('Enter a valid amount', true); return; }
+
+      const { error } = await sb.from('pocket_money').update({ amount, date, note }).eq('id', id);
+      if (error) { showToast(error.message, true); return; }
+      showToast('Updated');
+      state.editingPmId = null;
+      renderPocketMoney();
+    });
+  });
   $main.querySelectorAll('.pm-delete-btn').forEach(btn => {
     btn.addEventListener('click', async (e) => {
       if (!confirm('Delete this entry?')) return;
