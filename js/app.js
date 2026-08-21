@@ -243,7 +243,7 @@ function renderUploadForm() {
         </div>
         <div>
           <label class="block text-sm font-medium mb-1">Screenshot / photo (optional)</label>
-          <input type="file" name="image" accept="image/*" capture="environment" class="w-full text-sm" />
+          <input type="file" name="image" accept="image/*" class="w-full text-sm" />
         </div>
         <button type="submit" class="w-full bg-indigo-600 text-white rounded-lg py-3 font-medium active:bg-indigo-700">
           Submit
