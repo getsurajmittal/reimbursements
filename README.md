@@ -14,22 +14,32 @@ works again.
 
 ## Already have this running? Read this first
 
-If you've already created a Supabase project and run the earlier
-`schema.sql`, don't run `schema.sql` again - open
-**SQL Editor -> New query**, paste in `supabase/migration_v2.sql` instead,
-and click **Run**. It upgrades your existing tables in place (nothing is
-lost - any bills you'd already marked "settled" are carried forward as
-payment records) and adds what's new in this version:
+If you've already created a Supabase project, don't run `schema.sql` again
+(that's only for brand-new projects) - instead, open **SQL Editor -> New
+query** and run whichever migration files you haven't run yet, in order:
 
-- **Settle in full or in part.** A new **What I Owe** tab shows the total
-  you currently owe and lets you record a payment of any amount - pay it
-  all off, or knock off part of it - instead of settling each bill one by
-  one.
-- **Edit and delete.** Bills, pocket money entries, and payment records can
-  all be edited or deleted after the fact, not just added.
+- **`supabase/migration_v2.sql`** (if you haven't already) - adds the
+  **What I Owe** tab for full/partial settlements, and lets bills, pocket
+  money entries, and payment records be edited or deleted after the fact.
+- **`supabase/migration_v3.sql`** - adds an **Activity** tab (payer only)
+  that automatically records every add/edit/delete across bills, pocket
+  money, and payments - who did it, when, and the before/after values. This
+  is driven by database triggers, so it can't be missed even as the app
+  grows. It only starts recording from the moment you run it forward -
+  nothing about your existing data is touched or lost.
 
-Then pull the updated `js/app.js` (and this README) into your project folder
-and push to GitHub as usual - see "Updating the app later" below.
+Both migrations are safe to re-run if you're not sure whether you already
+ran them. Then pull the updated `js/app.js`, `index.html`, and this README
+into your project folder and push to GitHub as usual - see "Updating the
+app later" below.
+
+**What's new in this version, alongside the Activity tab:**
+- **Export to CSV** - a button on the Bills tab and the What I Owe tab
+  downloads what you're looking at as a spreadsheet-ready file.
+- **Search & filter** on the Bills tab - filter by description text, a date
+  range, and (for the payer) who submitted it.
+- **Monthly trends chart** on the Dashboard - bills, pocket money, and
+  payments for the last 6 months, side by side.
 
 ## Overview of what you're setting up
 
@@ -49,13 +59,15 @@ and push to GitHub as usual - see "Updating the app later" below.
 1. In your new project, open **SQL Editor** (left sidebar) -> **New query**.
 2. Open `supabase/schema.sql` from this folder, copy its entire contents,
    paste into the SQL Editor, and click **Run**.
-3. This creates the `profiles`, `pocket_money`, `reimbursements`, and
-   `settlements` tables, all the access-control rules, the dashboard summary
-   function, and a private `receipts` storage bucket for photos.
+3. This creates the `profiles`, `pocket_money`, `reimbursements`,
+   `settlements`, and `audit_log` tables, all the access-control rules, the
+   dashboard summary function, the audit-log triggers, and a private
+   `receipts` storage bucket for photos.
 
-   (Upgrading an existing project instead of starting fresh? Use
-   `supabase/migration_v2.sql` here instead - see "Already have this running?
-   Read this first" above.)
+   (Upgrading an existing project instead of starting fresh? Use the
+   migration files instead - see "Already have this running? Read this
+   first" above. `schema.sql` already includes everything for a fresh
+   project, so you don't need the migrations too.)
 
 ## Step 3: Create the two accounts
 
@@ -152,10 +164,11 @@ GitHub Pages picks up the new version automatically within a minute or two.
 index.html               - page shell (login screen + app shell)
 css/style.css            - small additions on top of Tailwind (loaded via CDN)
 js/supabaseClient.js     - your project URL + anon key (fill in Step 4)
-js/app.js                - all app logic: auth, bills, payments, dashboard
+js/app.js                - all app logic: auth, bills, payments, dashboard, activity log
 manifest.json            - lets you "Add to Home Screen" on mobile
 supabase/schema.sql      - run once, for a BRAND NEW Supabase project
-supabase/migration_v2.sql- run once, to upgrade an EXISTING Supabase project
+supabase/migration_v2.sql- run once, to upgrade an EXISTING Supabase project (What I Owe, edit/delete)
+supabase/migration_v3.sql- run once, to upgrade an EXISTING Supabase project (Activity/audit log)
 ```
 
 ## How the ledger works
@@ -192,6 +205,12 @@ totals as of any day you pick, for a historical view.
   their password, reset it from the Supabase dashboard (Authentication ->
   Users -> select the user -> send a password reset, or set a new one
   directly).
+- **The Activity tab only shows the payer.** Your brother can add/edit his
+  own bills as before, but he won't see the audit log - that's a payer-only
+  view, enforced by the database, not just hidden in the UI.
+- **Activity history starts from when you run `migration_v3.sql`, not
+  before.** There was nothing capturing changes before that, so past edits
+  aren't reconstructed - only new ones from that point on.
 - **This is a different deployment from the earlier Node/Docker version** -
   if you later get a Raspberry Pi or mini PC and want to self-host instead
   (no Supabase dependency, no 7-day pause), that version is still available;

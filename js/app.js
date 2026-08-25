@@ -9,6 +9,8 @@ const state = {
   editingBillId: null,
   editingPmId: null,
   editingSettlementId: null,
+  historyFilters: { search: '', from: '', to: '', uploader: '' },
+  chartInstance: null,
 };
 
 const $main = document.getElementById('main-content');
@@ -53,6 +55,28 @@ function escapeHtml(str) {
   const div = document.createElement('div');
   div.textContent = str == null ? '' : str;
   return div.innerHTML;
+}
+
+/* ---------------- CSV export ---------------- */
+
+function csvEscape(val) {
+  const s = val == null ? '' : String(val);
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+function downloadCsv(filename, headers, rows) {
+  const lines = [headers.join(',')].concat(
+    rows.map(row => row.map(csvEscape).join(','))
+  );
+  const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 }
 
 /* ---------------- Auth / bootstrap ---------------- */
@@ -134,6 +158,7 @@ function buildTabBar() {
         { id: 'history', label: 'Bills' },
         { id: 'owe', label: 'What I Owe' },
         { id: 'pocket', label: 'Pocket Money' },
+        { id: 'activity', label: 'Activity' },
       ]
     : [
         { id: 'upload', label: 'Add Bill' },
@@ -160,6 +185,7 @@ function switchTab(tabId) {
   else if (tabId === 'owe') renderOwe();
   else if (tabId === 'pocket') renderPocketMoney();
   else if (tabId === 'upload') renderUploadForm();
+  else if (tabId === 'activity') renderActivity();
 }
 
 /* ---------------- Payer: Dashboard ---------------- */
@@ -206,6 +232,11 @@ async function renderDashboard() {
         Settle up (${fmtMoney(summary.amount_owed)} owed)
       </button>
     ` : ''}
+
+    <div class="card">
+      <h2 class="font-semibold mb-3">Last 6 months</h2>
+      <canvas id="monthly-chart" height="200"></canvas>
+    </div>
   `;
 
   document.getElementById('as-of-input').addEventListener('change', (e) => {
@@ -217,6 +248,66 @@ async function renderDashboard() {
   if (goToOweBtn) {
     goToOweBtn.addEventListener('click', () => switchTab('owe'));
   }
+
+  renderMonthlyChart();
+}
+
+/* ---------------- Payer: Dashboard monthly trends chart ---------------- */
+
+function monthKey(dateStr) {
+  return dateStr.slice(0, 7); // 'YYYY-MM'
+}
+
+function monthLabel(key) {
+  const [y, m] = key.split('-').map(Number);
+  return new Date(y, m - 1, 1).toLocaleDateString(undefined, { month: 'short', year: '2-digit' });
+}
+
+async function renderMonthlyChart() {
+  const canvas = document.getElementById('monthly-chart');
+  if (!canvas || typeof Chart === 'undefined') return;
+
+  const [{ data: bills }, { data: pocket }, { data: payments }] = await Promise.all([
+    sb.from('reimbursements').select('amount, date'),
+    sb.from('pocket_money').select('amount, date'),
+    sb.from('settlements').select('amount, date'),
+  ]);
+
+  // Build the last 6 month keys, oldest first.
+  const now = new Date();
+  const months = [];
+  for (let i = 5; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    months.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+  }
+
+  const sumByMonth = (rows) => {
+    const totals = Object.fromEntries(months.map(m => [m, 0]));
+    (rows || []).forEach(r => {
+      const k = monthKey(r.date);
+      if (k in totals) totals[k] += Number(r.amount);
+    });
+    return months.map(m => totals[m]);
+  };
+
+  const datasets = [
+    { label: 'Bills', data: sumByMonth(bills), backgroundColor: '#f59e0b' },
+    { label: 'Pocket money', data: sumByMonth(pocket), backgroundColor: '#6366f1' },
+    { label: 'Paid back', data: sumByMonth(payments), backgroundColor: '#22c55e' },
+  ];
+
+  if (state.chartInstance) {
+    state.chartInstance.destroy();
+  }
+  state.chartInstance = new Chart(canvas, {
+    type: 'bar',
+    data: { labels: months.map(monthLabel), datasets },
+    options: {
+      responsive: true,
+      plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } } },
+      scales: { y: { beginAtZero: true } },
+    },
+  });
 }
 
 /* ---------------- Brother: Upload form ---------------- */
@@ -312,7 +403,7 @@ function billEditFormHtml(item) {
 async function renderHistory() {
   $main.innerHTML = `<p class="text-slate-400 text-sm">Loading...</p>`;
 
-  const { data: items, error } = await sb.from('reimbursements').select('*')
+  const { data: allItems, error } = await sb.from('reimbursements').select('*')
     .order('date', { ascending: false }).order('id', { ascending: false });
   if (error) {
     $main.innerHTML = `<p class="text-red-600">${escapeHtml(error.message)}</p>`;
@@ -325,6 +416,16 @@ async function renderHistory() {
   const { data: profiles } = await sb.from('profiles').select('id, display_name');
   const nameById = Object.fromEntries((profiles || []).map(p => [p.id, p.display_name]));
 
+  // Apply search/filter (client-side - small dataset for a two-person app).
+  const f = state.historyFilters || { search: '', from: '', to: '', uploader: '' };
+  const items = allItems.filter(item => {
+    if (f.search && !item.description.toLowerCase().includes(f.search.toLowerCase())) return false;
+    if (f.from && item.date < f.from) return false;
+    if (f.to && item.date > f.to) return false;
+    if (f.uploader && item.uploaded_by !== f.uploader) return false;
+    return true;
+  });
+
   // Generate short-lived signed URLs for any receipt photos.
   const withImagePaths = items.filter(i => i.image_path);
   const signedUrlByPath = {};
@@ -336,6 +437,7 @@ async function renderHistory() {
   }
 
   const total = items.reduce((sum, i) => sum + Number(i.amount), 0);
+  const filtersActive = f.search || f.from || f.to || f.uploader;
 
   const list = items.length ? items.map(item => {
     const canEdit = isPayer || item.uploaded_by === state.user.id;
@@ -360,15 +462,62 @@ async function renderHistory() {
       `}
     </div>
   `;
-  }).join('') : `<p class="text-slate-400 text-sm text-center py-8">No bills here yet.</p>`;
+  }).join('') : `<p class="text-slate-400 text-sm text-center py-8">${filtersActive ? 'No bills match your filters.' : 'No bills here yet.'}</p>`;
+
+  const uploaderOptions = isPayer
+    ? Object.entries(nameById).map(([id, name]) =>
+        `<option value="${id}" ${f.uploader === id ? 'selected' : ''}>${escapeHtml(name)}</option>`
+      ).join('')
+    : '';
 
   $main.innerHTML = `
+    <div class="card space-y-2">
+      <input type="text" id="filter-search" placeholder="Search description..." value="${escapeHtml(f.search)}"
+        class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+      <div class="flex gap-2">
+        <input type="date" id="filter-from" value="${f.from}" max="${todayISO()}"
+          class="w-1/2 rounded-lg border border-slate-300 px-2 py-2 text-sm" title="From date" />
+        <input type="date" id="filter-to" value="${f.to}" max="${todayISO()}"
+          class="w-1/2 rounded-lg border border-slate-300 px-2 py-2 text-sm" title="To date" />
+      </div>
+      ${isPayer ? `
+        <select id="filter-uploader" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm">
+          <option value="">Everyone</option>
+          ${uploaderOptions}
+        </select>
+      ` : ''}
+      ${filtersActive ? `<button id="clear-filters-btn" class="text-xs text-indigo-600 font-medium">Clear filters</button>` : ''}
+    </div>
+
     <div class="card flex items-center justify-between">
-      <p class="text-sm text-slate-500">${items.length} bill${items.length === 1 ? '' : 's'} total</p>
-      <p class="font-semibold">${fmtMoney(total)}</p>
+      <p class="text-sm text-slate-500">${items.length} bill${items.length === 1 ? '' : 's'}${filtersActive ? ' (filtered)' : ' total'}</p>
+      <div class="flex items-center gap-3">
+        <p class="font-semibold">${fmtMoney(total)}</p>
+        <button id="export-bills-csv-btn" class="text-xs bg-slate-200 text-slate-700 px-3 py-1.5 rounded-full">Export CSV</button>
+      </div>
     </div>
     <div class="space-y-3">${list}</div>
   `;
+
+  const applyFilter = (patch) => {
+    state.historyFilters = { ...f, ...patch };
+    renderHistory();
+  };
+  document.getElementById('filter-search').addEventListener('change', (e) => applyFilter({ search: e.target.value.trim() }));
+  document.getElementById('filter-from').addEventListener('change', (e) => applyFilter({ from: e.target.value }));
+  document.getElementById('filter-to').addEventListener('change', (e) => applyFilter({ to: e.target.value }));
+  const uploaderSel = document.getElementById('filter-uploader');
+  if (uploaderSel) uploaderSel.addEventListener('change', (e) => applyFilter({ uploader: e.target.value }));
+  const clearBtn = document.getElementById('clear-filters-btn');
+  if (clearBtn) clearBtn.addEventListener('click', () => { state.historyFilters = { search: '', from: '', to: '', uploader: '' }; renderHistory(); });
+
+  document.getElementById('export-bills-csv-btn').addEventListener('click', () => {
+    downloadCsv(
+      `bills_${todayISO()}.csv`,
+      ['Date', 'Amount', 'Description', 'Submitted by'],
+      items.map(i => [i.date, i.amount, i.description, nameById[i.uploaded_by] || ''])
+    );
+  });
 
   $main.querySelectorAll('.thumb').forEach(img => {
     img.addEventListener('click', () => openLightbox(img.src));
@@ -504,10 +653,24 @@ async function renderOwe() {
     ` : `<p class="text-sm text-slate-400 text-center">Nothing outstanding right now.</p>`}
 
     <div>
-      <h2 class="font-semibold mb-2 px-1">Payment history</h2>
+      <div class="flex items-center justify-between mb-2 px-1">
+        <h2 class="font-semibold">Payment history</h2>
+        ${settlements.length ? `<button id="export-payments-csv-btn" class="text-xs bg-slate-200 text-slate-700 px-3 py-1.5 rounded-full">Export CSV</button>` : ''}
+      </div>
       <div class="space-y-3">${settlementsList}</div>
     </div>
   `;
+
+  const exportPaymentsBtn = document.getElementById('export-payments-csv-btn');
+  if (exportPaymentsBtn) {
+    exportPaymentsBtn.addEventListener('click', () => {
+      downloadCsv(
+        `payments_${todayISO()}.csv`,
+        ['Date', 'Amount', 'Note'],
+        settlements.map(s => [s.date, s.amount, s.note || ''])
+      );
+    });
+  }
 
   const settleForm = document.getElementById('settle-form');
   if (settleForm) {
@@ -691,6 +854,125 @@ async function renderPocketMoney() {
       renderPocketMoney();
     });
   });
+}
+
+/* ---------------- Payer: Activity (audit log) ---------------- */
+
+const AUDIT_TABLE_LABELS = {
+  reimbursements: 'Bill',
+  pocket_money: 'Pocket money',
+  settlements: 'Payment',
+};
+
+const AUDIT_FIELD_LABELS = {
+  amount: 'Amount',
+  description: 'Description',
+  date: 'Date',
+  note: 'Note',
+  image_path: 'Receipt photo',
+};
+
+// Fields we never show in a diff - identifiers and unchanging metadata.
+const AUDIT_IGNORE_FIELDS = new Set(['id', 'created_at', 'uploaded_by', 'created_by']);
+
+function fmtDateTime(ts) {
+  return new Date(ts).toLocaleString(undefined, {
+    day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
+  });
+}
+
+function fmtAuditValue(field, val) {
+  if (val == null || val === '') return '-';
+  if (field === 'amount') return fmtMoney(val);
+  if (field === 'date') return fmtDate(val);
+  if (field === 'image_path') return 'attached';
+  return String(val);
+}
+
+function summarizeAuditRow(data) {
+  if (!data) return '';
+  const bits = [];
+  if (data.amount != null) bits.push(fmtMoney(data.amount));
+  if (data.description) bits.push(data.description);
+  else if (data.note) bits.push(data.note);
+  if (data.date) bits.push(fmtDate(data.date));
+  return bits.join(' · ');
+}
+
+function diffAuditFields(oldData, newData) {
+  const fields = new Set([...Object.keys(oldData || {}), ...Object.keys(newData || {})]);
+  const changes = [];
+  fields.forEach(field => {
+    if (AUDIT_IGNORE_FIELDS.has(field)) return;
+    const oldVal = oldData ? oldData[field] : undefined;
+    const newVal = newData ? newData[field] : undefined;
+    if (String(oldVal ?? '') !== String(newVal ?? '')) {
+      changes.push({ field, oldVal, newVal });
+    }
+  });
+  return changes;
+}
+
+async function renderActivity() {
+  $main.innerHTML = `<p class="text-slate-400 text-sm">Loading...</p>`;
+
+  const [{ data: logRows, error }, { data: profiles }] = await Promise.all([
+    sb.from('audit_log').select('*').order('changed_at', { ascending: false }).limit(200),
+    sb.from('profiles').select('id, display_name'),
+  ]);
+
+  if (error) {
+    $main.innerHTML = `<p class="text-red-600">${escapeHtml(error.message)}</p>`;
+    return;
+  }
+
+  const nameById = Object.fromEntries((profiles || []).map(p => [p.id, p.display_name]));
+
+  const rows = logRows.length ? logRows.map(row => {
+    const tableLabel = AUDIT_TABLE_LABELS[row.table_name] || row.table_name;
+    const who = nameById[row.changed_by] || 'Someone';
+    const actionLabel = { insert: 'Added', update: 'Edited', delete: 'Deleted' }[row.action] || row.action;
+    const badgeColor = { insert: 'bg-green-50 text-green-700', update: 'bg-amber-50 text-amber-700', delete: 'bg-red-50 text-red-700' }[row.action];
+
+    let detailHtml;
+    if (row.action === 'insert') {
+      detailHtml = `<p class="text-sm text-slate-600 mt-1">${escapeHtml(summarizeAuditRow(row.new_data))}</p>`;
+    } else if (row.action === 'delete') {
+      detailHtml = `<p class="text-sm text-slate-600 mt-1">${escapeHtml(summarizeAuditRow(row.old_data))}</p>`;
+    } else {
+      const changes = diffAuditFields(row.old_data, row.new_data);
+      detailHtml = changes.length ? `
+        <div class="mt-1 space-y-0.5">
+          ${changes.map(c => `
+            <p class="text-sm text-slate-600">
+              <span class="text-slate-400">${escapeHtml(AUDIT_FIELD_LABELS[c.field] || c.field)}:</span>
+              ${escapeHtml(fmtAuditValue(c.field, c.oldVal))} &rarr; ${escapeHtml(fmtAuditValue(c.field, c.newVal))}
+            </p>
+          `).join('')}
+        </div>
+      ` : `<p class="text-sm text-slate-400 mt-1">No field changes recorded</p>`;
+    }
+
+    return `
+      <div class="card">
+        <div class="flex items-start justify-between gap-2">
+          <div class="min-w-0">
+            <span class="text-xs font-medium px-2 py-0.5 rounded-full ${badgeColor}">${actionLabel} · ${escapeHtml(tableLabel)}</span>
+            <p class="text-xs text-slate-400 mt-1.5">${escapeHtml(who)} · ${fmtDateTime(row.changed_at)}</p>
+          </div>
+        </div>
+        ${detailHtml}
+      </div>
+    `;
+  }).join('') : `<p class="text-slate-400 text-sm text-center py-8">No activity recorded yet. Changes made from now on will show up here.</p>`;
+
+  $main.innerHTML = `
+    <div class="card">
+      <p class="text-sm text-slate-500">Every add, edit, and delete across bills, pocket money, and payments - most recent first.</p>
+    </div>
+    <div class="space-y-3">${rows}</div>
+    ${logRows.length === 200 ? `<p class="text-xs text-slate-400 text-center">Showing the most recent 200 changes.</p>` : ''}
+  `;
 }
 
 init();
