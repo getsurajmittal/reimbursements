@@ -13,14 +13,14 @@
    the header comment in js/ledger.js for why that distinction matters.
 */
 
-import { state, isPayer, fetchLedger, counterpartName } from '../store.js';
+import { state, isPayer, fetchLedger, counterpartName, signReceipts } from '../store.js';
 import { go } from '../router.js';
 import { rangeSeries } from '../ledger.js';
 import { PRESETS, periodFromPreset, matchPreset, periodLabel } from '../period.js';
 import { flowChart, flowLegend, balanceChart } from '../charts.js';
 import { icon } from '../icons.js';
 import {
-  skeleton, errorBox, hero, tile, tiles, sectionHead, empty, billRow, statusPill,
+  skeleton, errorBox, hero, tile, tiles, sectionHead, empty, billRow, statusPill, fillThumbs,
 } from '../ui.js';
 import {
   fmtMoney, fmtDate, fmtMoneyShort, escapeHtml, relativeDays, todayISO, on,
@@ -82,6 +82,7 @@ export async function renderHome() {
   const who = counterpartName();
   const settled = ledger.totals.outstanding <= 0;
   const label = periodLabel(state.period);
+  const recent = ledger.periodBillsNewestFirst.slice(0, 3);
 
   root.innerHTML = [
     periodBar(),
@@ -93,11 +94,25 @@ export async function renderHome() {
     lastPaymentCard({ ledger, copy }),
     balanceCard(copy),
     flowCard(label),
-    recentBillsCard({ ledger, payer, label }),
+    recentBillsCard({ ledger, payer, label, recent }),
   ].filter(Boolean).join('');
 
   wireUp(payer);
   drawCharts(ledger);
+  hydrateReceipts(root, recent);
+}
+
+/** Receipt photos need short-lived signed URLs, so they arrive after paint. */
+async function hydrateReceipts(root, bills) {
+  const withPhotos = bills.filter(b => b.image_path);
+  if (!withPhotos.length) return;
+  try {
+    const urls = await signReceipts(withPhotos.map(b => b.image_path));
+    fillThumbs(root, withPhotos, urls);
+  } catch {
+    // A photo that won't load is not worth breaking the dashboard over -
+    // the placeholder stays and the bill is still fully readable.
+  }
 }
 
 /* ---------------------------------------------------------- period bar --- */
@@ -356,9 +371,7 @@ function flowCard(label) {
   `;
 }
 
-function recentBillsCard({ ledger, payer, label }) {
-  const recent = ledger.periodBillsNewestFirst.slice(0, 3);
-
+function recentBillsCard({ ledger, payer, label, recent }) {
   if (!recent.length) {
     const anyEver = ledger.bills.length > 0;
     return empty({

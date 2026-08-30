@@ -2,7 +2,7 @@
    stay declarative and both dashboards are assembled from the same pieces. */
 
 import { icon } from './icons.js';
-import { escapeHtml, fmtMoney, fmtDate, fmtDateShort, pct } from './util.js';
+import { escapeHtml, fmtMoney, fmtDate, fmtDateShort, pct, openLightbox } from './util.js';
 import { STATUS } from './ledger.js';
 
 export function skeleton(rows = 3) {
@@ -121,6 +121,28 @@ export function receiptThumb(item, signedUrls) {
     return `<img class="thumb" src="${url}" alt="Receipt for ${escapeHtml(item.description)}" loading="lazy" />`;
   }
   return `<div class="thumb thumb--empty" aria-hidden="true">${icon('image')}</div>`;
+}
+
+/**
+ * Swap the placeholder thumbs for real receipt photos once their signed URLs
+ * arrive. Lets a screen paint immediately and fill the images in afterwards,
+ * rather than holding the whole render behind a round-trip per photo.
+ */
+export function fillThumbs(root, bills, signedUrls) {
+  bills.forEach(bill => {
+    const url = bill.image_path && signedUrls[bill.image_path];
+    if (!url) return;
+    const placeholder = root.querySelector(`[data-id="${bill.id}"] .thumb--empty`);
+    if (!placeholder) return;
+
+    const img = document.createElement('img');
+    img.className = 'thumb';
+    img.src = url;
+    img.alt = `Receipt for ${bill.description}`;
+    img.loading = 'lazy';
+    img.addEventListener('click', () => openLightbox(img.src));
+    placeholder.replaceWith(img);
+  });
 }
 
 /**
