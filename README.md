@@ -1,45 +1,78 @@
 # Reimbursements (GitHub Pages + Supabase edition)
 
-Same app as before - your brother submits bills/receipts, you log his pocket
-money separately, see running totals as of any date, and settle bills - but
-built to run entirely as static files. GitHub Pages hosts the HTML/CSS/JS for
-free; a free Supabase project provides the database, login, and photo
-storage, all called directly from the browser.
+Your brother submits bills and receipts, you log his pocket money separately,
+and both of you can see exactly what has been paid and what is still owed.
+It runs entirely as static files: GitHub Pages hosts the HTML/CSS/JS for free,
+and a free Supabase project provides the database, login, and photo storage,
+all called directly from the browser.
 
-There's no server of your own to run or pay for. The tradeoff: a free
-Supabase project auto-pauses after 7 days with no activity, and needs a
-manual "resume" click in the Supabase dashboard to wake back up. Your data
-isn't lost when that happens - it just needs that one click before the app
-works again.
+There's no server of your own to run or pay for. The tradeoff: a free Supabase
+project auto-pauses after 7 days with no activity, and needs a manual "resume"
+click in the Supabase dashboard to wake back up. Your data isn't lost when that
+happens - it just needs that one click before the app works again.
 
 ## Already have this running? Read this first
 
-If you've already created a Supabase project, don't run `schema.sql` again
-(that's only for brand-new projects) - instead, open **SQL Editor -> New
-query** and run whichever migration files you haven't run yet, in order:
+**Almost nothing changes in Supabase.** There is no new table, column, index
+or trigger in this version - the per-bill payment status you now see is derived
+in the browser, not stored.
 
-- **`supabase/migration_v2.sql`** (if you haven't already) - adds the
-  **What I Owe** tab for full/partial settlements, and lets bills, pocket
-  money entries, and payment records be edited or deleted after the fact.
-- **`supabase/migration_v3.sql`** - adds an **Activity** tab (payer only)
-  that automatically records every add/edit/delete across bills, pocket
-  money, and payments - who did it, when, and the before/after values. This
-  is driven by database triggers, so it can't be missed even as the app
-  grows. It only starts recording from the moment you run it forward -
-  nothing about your existing data is touched or lost.
+There is one small thing to run: **`supabase/migration_v4.sql`**. Your
+brother's account now reads two tables it never read before - `pocket_money`
+(to show him the allowance you've logged) and `profiles` (to show him *your*
+name). Both are supposed to be readable by any logged-in user, but if your
+project was built from the original v1 schema, those two read policies were
+never exercised by his account, so a stricter setting there would have gone
+unnoticed until now. The file just guarantees them. It changes no data, grants
+nothing beyond reading those two tables, and is a no-op if you're already
+correct - and it opens with a query you can run first if you'd rather look
+before changing anything.
 
-Both migrations are safe to re-run if you're not sure whether you already
-ran them. Then pull the updated `js/app.js`, `index.html`, and this README
-into your project folder and push to GitHub as usual - see "Updating the
-app later" below.
+If you're coming from an older copy and haven't run these yet, run them once
+each in **SQL Editor -> New query**, in order. Both are safe to re-run if
+you're unsure:
 
-**What's new in this version, alongside the Activity tab:**
-- **Export to CSV** - a button on the Bills tab and the What I Owe tab
-  downloads what you're looking at as a spreadsheet-ready file.
-- **Search & filter** on the Bills tab - filter by description text, a date
-  range, and (for the payer) who submitted it.
-- **Monthly trends chart** on the Dashboard - bills, pocket money, and
-  payments for the last 6 months, side by side.
+- **`supabase/migration_v2.sql`** - full/partial settlements, plus editing and
+  deleting bills, pocket money entries, and payment records after the fact.
+- **`supabase/migration_v3.sql`** - the Activity tab (payer only): an audit log
+  driven by database triggers.
+- **`supabase/migration_v4.sql`** - the two read policies described above.
+
+Then pull the updated files and push them to GitHub - see "Updating the app
+later" below.
+
+## What's new in this version
+
+Previously the payer got a dashboard and your brother got a bare list of the
+bills he'd submitted - he couldn't tell which of them had been paid, how much
+had come back, or whether a chunk of the total had been cleared. That's fixed,
+and both sides were rebuilt around the same idea.
+
+**Every bill now has a visible payment status.** The database deliberately
+doesn't tie a payment to a bill - what's owed is just (all bills - all
+payments), so any amount can be paid at any time. That's flexible to record but
+impossible to read. The app now derives the link **oldest bill first**: each
+payment, in date order, is applied to the oldest bill that still has a balance.
+So every bill shows as **Paid** / **Part paid** / **Awaiting payment**, with the
+date it was cleared and how much of it is still open - all computed from rows
+that were already there, with nothing new stored.
+
+**Your brother now has a real dashboard**, answering in order: how much he's
+owed, how much of what he submitted has been cleared (with a progress bar),
+which bills are still open, and what the last payment was *and which bills it
+covered*. Plus a new **Received** tab: every payment with the bills it cleared,
+and all pocket money, in one place.
+
+**The payer's dashboard was rebuilt too** - a bill-status breakdown you can tap
+to jump straight to those bills, an oldest-open-bill warning, a balance-over-
+time chart, and a **live preview when settling up** that tells you which bills
+the amount you're typing will actually clear before you record it.
+
+Also: dark mode (follows your phone, with a manual toggle), a
+"time travel" control to view the ledger as of any past date, status filters
+and CSV exports that now include each bill's paid/outstanding/status columns,
+and the Tailwind CDN dependency dropped in favour of a small self-contained
+stylesheet.
 
 ## Overview of what you're setting up
 
@@ -64,10 +97,10 @@ app later" below.
    dashboard summary function, the audit-log triggers, and a private
    `receipts` storage bucket for photos.
 
-   (Upgrading an existing project instead of starting fresh? Use the
-   migration files instead - see "Already have this running? Read this
-   first" above. `schema.sql` already includes everything for a fresh
-   project, so you don't need the migrations too.)
+   (Upgrading an existing project instead of starting fresh? Use the migration
+   files - see "Already have this running?" above. `schema.sql` already
+   includes everything for a fresh project, so you don't need the migrations
+   too.)
 
 ## Step 3: Create the two accounts
 
@@ -92,7 +125,9 @@ app later" below.
    ```
 
    The `role` must be exactly `payer` or `brother` - that's what the app uses
-   to decide which screens and permissions someone gets.
+   to decide which screens and permissions someone gets. The `display_name`
+   is what the other person sees throughout the app ("You owe Aman"), so
+   use a real first name.
 
 ## Step 4: Connect the app to your project
 
@@ -116,7 +151,7 @@ app later" below.
 2. Push the contents of this folder to it:
 
    ```bash
-   cd reimburse-app-supabase
+   cd reimbursements
    git init
    git add .
    git commit -m "Reimbursements app"
@@ -138,17 +173,90 @@ Both of you can open that link, add it to your phone's home screen (Safari:
 Share -> "Add to Home Screen"; Chrome/Android: menu -> "Add to Home screen"),
 and log in with the email/password you set up in Step 3.
 
+## How the ledger works
+
+Two separate tracks:
+
+**Pocket money** is a running log you add to whenever you hand over allowance.
+Nothing to settle - it's just a record, and it never counts towards what you
+owe. Both of you can see it; only the payer can add to it.
+
+**Reimbursements** are bills your brother submits, with an optional photo.
+There's no per-bill "settled" column in the database. What's owed is simply
+the total of all bills minus the total of all payments, so you can pay off any
+chunk at any time without matching payments to specific bills.
+
+**The app derives the match anyway, oldest bill first.** Every payment, in date
+order, is applied to the oldest bill that still has a balance - the way a
+shopkeeper's ledger works. It's stable (a new bill never re-opens an older one)
+and it means both of you see the same per-bill status without the database
+having to store it:
+
+- **Paid** - fully covered, showing the date it was cleared.
+- **Part paid** - showing how much has come in and how much is still open.
+- **Awaiting payment** - nothing applied to it yet.
+
+Pay more than you owe and the surplus is held as **credit** against future
+bills. Every bill, pocket money entry, and payment can still be edited or
+deleted later; the whole allocation simply recomputes from the stored rows, so
+it's always consistent with whatever the data currently says.
+
+### Colour choices
+
+The charts use a palette validated for colour-blind separation and contrast
+against both the light and dark surfaces (blue = bills submitted, orange =
+pocket money, green = paid back). Series colour follows the *entity*, never its
+position in a list, so filtering never repaints the remaining series. Payment
+status is always shown as an icon **and** a word, never colour alone, and the
+month-by-month chart has a "Show numbers" table view for the same reason. If
+you change these, keep those properties.
+
+## Project structure
+
+```
+index.html                  - page shell (login screen + app shell)
+css/style.css               - the whole design system: tokens, components, light/dark
+manifest.json               - lets you "Add to Home Screen" on mobile
+
+js/supabaseClient.js        - your project URL + anon key (fill in Step 4)
+js/app.js                   - bootstrap: auth, theme, tab bar, route table
+js/router.js                - tab routing
+js/store.js                 - session state + every Supabase read/write
+js/ledger.js                - the oldest-first allocation engine (all the money logic)
+js/charts.js                - Chart.js wrappers + the validated palette
+js/ui.js                    - reusable HTML components (tiles, pills, rows, meters)
+js/icons.js                 - inline SVG icon set
+js/util.js                  - formatting, CSV export, toasts
+
+js/views/home.js            - the dashboard, both roles
+js/views/bills.js           - bills list with status, both roles
+js/views/addBill.js         - submit a bill (payee)
+js/views/settle.js          - settle up, with the live allocation preview (payer)
+js/views/pocket.js          - pocket money (payer)
+js/views/received.js        - payments + pocket money received (payee)
+js/views/activity.js        - audit log (payer)
+
+supabase/schema.sql         - run once, for a BRAND NEW Supabase project
+supabase/migration_v2.sql   - run once, to upgrade an EXISTING project (settlements, edit/delete)
+supabase/migration_v3.sql   - run once, to upgrade an EXISTING project (Activity/audit log)
+supabase/migration_v4.sql   - run once, to upgrade an EXISTING project (payee read policies)
+```
+
+`js/ledger.js` is the piece worth knowing: it's pure (rows in, derived ledger
+out) with no DOM or network access, so it can be reasoned about and tested on
+its own, and every screen reads its numbers from it rather than recomputing.
+
 ## If the app stops working after a quiet week
 
-Free Supabase projects pause themselves after 7 days of no requests. If
-login suddenly fails, go to your Supabase project dashboard - it'll show a
-"paused" banner with a **Restore/Resume** button. Click it, wait a minute,
-and the app works again with all your data intact.
+Free Supabase projects pause themselves after 7 days of no requests. If login
+suddenly fails, go to your Supabase project dashboard - it'll show a "paused"
+banner with a **Restore/Resume** button. Click it, wait a minute, and the app
+works again with all your data intact.
 
 ## Updating the app later
 
-Whenever you want to change something, edit the files in this folder and
-push again:
+Whenever you want to change something, edit the files in this folder and push
+again:
 
 ```bash
 git add .
@@ -158,60 +266,29 @@ git push
 
 GitHub Pages picks up the new version automatically within a minute or two.
 
-## Project structure
-
-```
-index.html               - page shell (login screen + app shell)
-css/style.css            - small additions on top of Tailwind (loaded via CDN)
-js/supabaseClient.js     - your project URL + anon key (fill in Step 4)
-js/app.js                - all app logic: auth, bills, payments, dashboard, activity log
-manifest.json            - lets you "Add to Home Screen" on mobile
-supabase/schema.sql      - run once, for a BRAND NEW Supabase project
-supabase/migration_v2.sql- run once, to upgrade an EXISTING Supabase project (What I Owe, edit/delete)
-supabase/migration_v3.sql- run once, to upgrade an EXISTING Supabase project (Activity/audit log)
-```
-
-## How the ledger works
-
-Two separate tracks: pocket money is a running log you add to whenever you
-hand over allowance - nothing to settle, just a record. Reimbursements are
-bills your brother submits (with an optional photo) - there's no per-bill
-"settled" status; what's owed is simply the total of all bills minus the
-total of all payments you've recorded.
-
-The **What I Owe** tab shows that running total and lets you record a
-payment against it: the full amount, or any smaller amount for a partial
-payment. Payments aren't tied to specific bills, so you don't need to match
-them up - pay off a chunk whenever you like and the total owed drops
-accordingly. Every bill, pocket money entry, and payment record can be
-edited or deleted later if you make a mistake. The Dashboard tab still shows
-totals as of any day you pick, for a historical view.
-
 ## Things worth knowing
 
-- **Photos are private.** The receipts bucket isn't public - the app
-  generates a temporary (1 hour) signed link each time it shows a photo, so
-  random people can't guess a photo's URL and view it.
+- **Photos are private.** The receipts bucket isn't public - the app generates
+  a temporary (1 hour) signed link each time it shows a photo, so random people
+  can't guess a photo's URL and view it.
+- **Deleting a bill that's already been paid against** re-applies that money to
+  the other open bills, since payments aren't tied to bills. The app warns you
+  before you confirm.
+- **Deleting a payment record puts that amount back into what's owed** - useful
+  for correcting a mistaken entry, but worth double-checking first.
+- **Editing a bill doesn't let you swap its photo.** You can change the amount,
+  description, or date; to change the photo, delete the bill and submit a new
+  one.
 - **Deleted bills leave the photo file behind** in storage (harmless, just
-  slightly wastes your free storage quota over time - 1GB is a lot of
-  receipt photos, so this is unlikely to matter for a two-person app).
-- **Editing a bill doesn't let you swap its photo.** You can change the
-  amount, description, or date; to change the photo, delete the bill and
-  submit a new one.
-- **Deleting a payment record puts that amount back into what's owed** -
-  useful for correcting a mistaken entry, but worth double-checking before
-  you confirm the delete.
-- **No "forgot password" flow is wired up in the UI.** If someone forgets
-  their password, reset it from the Supabase dashboard (Authentication ->
-  Users -> select the user -> send a password reset, or set a new one
-  directly).
-- **The Activity tab only shows the payer.** Your brother can add/edit his
-  own bills as before, but he won't see the audit log - that's a payer-only
-  view, enforced by the database, not just hidden in the UI.
-- **Activity history starts from when you run `migration_v3.sql`, not
-  before.** There was nothing capturing changes before that, so past edits
-  aren't reconstructed - only new ones from that point on.
-- **This is a different deployment from the earlier Node/Docker version** -
-  if you later get a Raspberry Pi or mini PC and want to self-host instead
-  (no Supabase dependency, no 7-day pause), that version is still available;
-  just ask and I can hand it over again.
+  slightly wastes your free storage quota - 1GB is a lot of receipt photos).
+- **The model assumes only your brother submits bills.** He can see every
+  payment but, by design, only his own bills - so if the payer account also
+  submitted bills, your brother's "still owed" figure would be too low. Keep
+  bills coming from the one account and the two views always agree.
+- **The Activity tab is payer-only**, enforced by the database, not just hidden
+  in the UI. Its history starts from when you ran `migration_v3.sql` - earlier
+  changes weren't captured and aren't reconstructed.
+- **No "forgot password" flow is wired up.** Reset it from the Supabase
+  dashboard (Authentication -> Users -> select the user).
+- **Dark mode** follows your phone's setting by default; the sun/moon button in
+  the header overrides it and remembers your choice on that device.

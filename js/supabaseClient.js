@@ -11,4 +11,6 @@ if (SUPABASE_URL.startsWith('YOUR_') || SUPABASE_ANON_KEY.startsWith('YOUR_')) {
   console.warn('supabaseClient.js: fill in SUPABASE_URL and SUPABASE_ANON_KEY before deploying.');
 }
 
-const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+// `supabase` is the global the supabase-js CDN bundle defines; index.html loads
+// that classic script before this module, so it's ready by the time we run.
+export const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);

@@ -1,9 +1,12 @@
 {
   "name": "Reimbursements",
   "short_name": "Reimburse",
-  "start_url": "/",
+  "description": "Bills, payments and what's still owed, for both sides.",
+  "start_url": "./",
+  "scope": "./",
   "display": "standalone",
-  "background_color": "#f1f5f9",
+  "background_color": "#f4f4f2",
   "theme_color": "#4f46e5",
+  "orientation": "portrait",
   "icons": []
 }

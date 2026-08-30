@@ -2,67 +2,82 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
 <title>Reimbursements</title>
 <link rel="manifest" href="./manifest.json" />
-<meta name="theme-color" content="#4f46e5" />
-<script src="https://cdn.tailwindcss.com"></script>
+<meta name="theme-color" content="#4f46e5" media="(prefers-color-scheme: light)" />
+<meta name="theme-color" content="#1c1c1b" media="(prefers-color-scheme: dark)" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<link rel="stylesheet" href="./css/style.css" />
+<script>
+  // Set the theme before first paint so a dark-mode launch never flashes white.
+  try {
+    var t = localStorage.getItem('reimb-theme');
+    if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t);
+  } catch (e) {}
+</script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
-<link rel="stylesheet" href="./css/style.css" />
 </head>
-<body class="bg-slate-100 min-h-screen text-slate-800">
+<body>
 
-  <!-- Login screen -->
-  <div id="login-screen" class="min-h-screen flex items-center justify-center p-4 hidden">
-    <div class="w-full max-w-sm bg-white rounded-2xl shadow-md p-6">
-      <h1 class="text-xl font-semibold text-center mb-1">Reimbursements</h1>
-      <p class="text-sm text-slate-500 text-center mb-6">Sign in to continue</p>
-      <form id="login-form" class="space-y-4">
-        <div>
-          <label class="block text-sm font-medium mb-1" for="email">Email</label>
-          <input id="email" name="email" type="email" autocomplete="username" required
-            class="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-base focus:outline-none focus:ring-2 focus:ring-indigo-500" />
-        </div>
-        <div>
-          <label class="block text-sm font-medium mb-1" for="password">Password</label>
-          <input id="password" name="password" type="password" autocomplete="current-password" required
-            class="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-base focus:outline-none focus:ring-2 focus:ring-indigo-500" />
-        </div>
-        <p id="login-error" class="text-sm text-red-600 hidden"></p>
-        <button type="submit"
-          class="w-full bg-indigo-600 text-white rounded-lg py-2.5 font-medium active:bg-indigo-700">
-          Log in
-        </button>
+  <!-- Login ------------------------------------------------------------- -->
+  <div id="login-screen" class="login">
+    <div class="login__card">
+      <div class="login__mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+             stroke-linecap="round" stroke-linejoin="round">
+          <path d="M5 3v18l2.5-1.5L10 21l2-1.5L14 21l2.5-1.5L19 21V3z"/>
+          <path d="M9 8h6"/><path d="M9 12h6"/>
+        </svg>
+      </div>
+      <h1 style="text-align:center;font-size:19px">Reimbursements</h1>
+      <p style="text-align:center;color:var(--text-muted);font-size:13.5px;margin-top:4px">
+        Bills, payments and what's still owed
+      </p>
+
+      <form id="login-form" class="stack" style="margin-top:20px">
+        <label class="field">
+          <span class="field__label">Email</span>
+          <input id="email" name="email" type="email" autocomplete="username" required />
+        </label>
+        <label class="field">
+          <span class="field__label">Password</span>
+          <input id="password" name="password" type="password" autocomplete="current-password" required />
+        </label>
+        <p id="login-error" class="notice" hidden></p>
+        <button type="submit" class="btn btn--block">Log in</button>
       </form>
     </div>
   </div>
 
-  <!-- App shell -->
-  <div id="app" class="hidden max-w-lg mx-auto min-h-screen flex flex-col pb-20">
-    <header class="bg-indigo-600 text-white px-4 py-4 flex items-center justify-between sticky top-0 z-10 shadow">
-      <div>
-        <p class="text-xs text-indigo-200 leading-none">Signed in as</p>
-        <p class="font-semibold leading-tight" id="user-name">-</p>
+  <!-- App shell --------------------------------------------------------- -->
+  <div id="app" class="shell">
+    <header class="appbar">
+      <div class="avatar" id="avatar" aria-hidden="true">-</div>
+      <div class="appbar__who">
+        <p class="appbar__name" id="user-name">-</p>
+        <p class="appbar__role" id="user-role">-</p>
       </div>
-      <button id="logout-btn" class="text-sm bg-indigo-500/60 px-3 py-1.5 rounded-lg active:bg-indigo-500">
-        Log out
+      <button type="button" class="icon-btn" id="theme-btn" aria-label="Toggle dark mode"></button>
+      <button type="button" class="icon-btn" id="logout-btn" aria-label="Log out">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+             stroke-linecap="round" stroke-linejoin="round">
+          <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 16 5-4-5-4"/><path d="M21 12H9"/>
+        </svg>
       </button>
     </header>
 
-    <main id="main-content" class="flex-1 p-4 space-y-4"></main>
+    <main id="main-content" class="main"></main>
 
-    <nav id="tab-bar" class="fixed bottom-0 left-0 right-0 max-w-lg mx-auto bg-white border-t border-slate-200 flex">
-      <!-- tab buttons injected by JS depending on role -->
-    </nav>
+    <nav id="tab-bar" class="tabbar" aria-label="Sections"></nav>
   </div>
 
-  <!-- Image lightbox -->
-  <div id="lightbox" class="hidden fixed inset-0 bg-black/80 z-50 items-center justify-center p-4" onclick="this.classList.add('hidden')">
-    <img id="lightbox-img" src="" class="max-h-full max-w-full rounded-lg" />
+  <!-- Receipt lightbox -------------------------------------------------- -->
+  <div id="lightbox" class="lightbox">
+    <img id="lightbox-img" src="" alt="Receipt" />
   </div>
 
-  <script src="./js/supabaseClient.js"></script>
-  <script src="./js/app.js"></script>
+  <script type="module" src="./js/app.js"></script>
 </body>
 </html>
