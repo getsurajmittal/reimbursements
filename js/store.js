@@ -2,14 +2,14 @@
    so the query surface stays in one auditable place. */
 
 import { sb } from './supabaseClient.js';
-import { todayISO } from './util.js';
 import { buildLedger } from './ledger.js';
+import { defaultPeriod } from './period.js';
 
 export const state = {
   user: null,        // Supabase auth user
   profile: null,     // { id, role, display_name }
   activeTab: null,
-  asOf: todayISO(),  // dashboard "show totals as of" date
+  period: defaultPeriod(),   // { key, from, to } - the dashboard opens on this month
   editing: { bill: null, payment: null, pocket: null },
   filters: { search: '', from: '', to: '', uploader: '', status: '' },
   names: {},         // uuid -> display name
@@ -49,8 +49,11 @@ export function counterpartName() {
  * table: the payer sees all bills, the uploader sees only their own, and both
  * can read payments and pocket money - so the same call is correct for both
  * roles without any role branching here.
+ *
+ * Pass no arguments for the full history up to today - that's what every tab
+ * except the dashboard wants. The dashboard passes its selected period.
  */
-export async function fetchLedger({ asOf = state.asOf } = {}) {
+export async function fetchLedger({ from = null, to = null } = {}) {
   const [bills, settlements, pocketMoney] = await Promise.all([
     sb.from('reimbursements').select('*'),
     sb.from('settlements').select('*'),
@@ -64,7 +67,8 @@ export async function fetchLedger({ asOf = state.asOf } = {}) {
     bills: bills.data || [],
     settlements: settlements.data || [],
     pocketMoney: pocketMoney.data || [],
-    asOf,
+    from,
+    to: to || state.period.to,
   });
   return state.cache;
 }

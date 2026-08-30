@@ -141,7 +141,7 @@ function wire(root) {
 async function showOutcome(root, amount) {
   const slot = root.querySelector('#after-submit');
   try {
-    const ledger = await fetchLedger({ asOf: todayISO() });
+    const ledger = await fetchLedger({ to: todayISO() });
     slot.innerHTML = `
       <div class="card" style="border-left:3px solid var(--good)">
         <div class="row" style="align-items:flex-start">

@@ -9,7 +9,7 @@
      identity never rests on colour alone.
 */
 
-import { fmtMoney, fmtMoneyShort, monthLabel } from './util.js';
+import { fmtMoney, fmtMoneyShort } from './util.js';
 
 const instances = new Map();
 
@@ -89,12 +89,13 @@ export function destroyCharts() {
 }
 
 /**
- * Month-by-month comparison. Three series, so a legend is mandatory - the
- * caller renders `monthlyLegend()` next to it, plus a table view (the aqua
- * step sits below 3:1 on the light surface, so the figures must also be
- * readable as text).
+ * The flow comparison, bucketed by whatever the selected range implies (weeks
+ * for a month, months for a year, quarters beyond that). Three series, so a
+ * legend is mandatory - the caller renders `flowLegend()` next to it, plus a
+ * table view (the aqua step sits below 3:1 on the light surface, so the
+ * figures must also be readable as text).
  */
-export function monthlyChart(canvasId, series, { showPocket = true } = {}) {
+export function flowChart(canvasId, series, { showPocket = true } = {}) {
   const c = chartColors();
   const datasets = [
     { label: 'Bills submitted', data: series.bills, backgroundColor: c.s1 },
@@ -105,13 +106,13 @@ export function monthlyChart(canvasId, series, { showPocket = true } = {}) {
   return mount(canvasId, {
     type: 'bar',
     data: {
-      labels: series.keys.map(monthLabel),
+      labels: series.labels,
       datasets: datasets.map(d => ({
         ...d,
         borderRadius: 4,          // rounded data-end only
         borderSkipped: 'bottom',  // square where it meets the baseline
         barPercentage: 0.92,
-        categoryPercentage: 0.68, // breathing room between month groups
+        categoryPercentage: 0.68, // breathing room between groups
         maxBarThickness: 22,
       })),
     },
@@ -119,7 +120,7 @@ export function monthlyChart(canvasId, series, { showPocket = true } = {}) {
   });
 }
 
-export function monthlyLegend({ showPocket = true } = {}) {
+export function flowLegend({ showPocket = true } = {}) {
   const items = [
     ['s1', 'Bills submitted'],
     ...(showPocket ? [['s2', 'Pocket money']] : []),
@@ -150,10 +151,10 @@ const endpointLabel = {
 };
 
 /**
- * Outstanding balance at each month's close. A single series, so no legend -
+ * Outstanding balance at each bucket's close. A single series, so no legend -
  * the card title names it and the endpoint carries its own label.
  */
-export function balanceChart(canvasId, keys, values) {
+export function balanceChart(canvasId, labels, values) {
   const c = chartColors();
   const options = baseOptions(c);
   options.plugins.tooltip.callbacks.label = (ctx) => ` Outstanding: ${fmtMoney(ctx.parsed.y)}`;
@@ -162,7 +163,7 @@ export function balanceChart(canvasId, keys, values) {
   return mount(canvasId, {
     type: 'line',
     data: {
-      labels: keys.map(monthLabel),
+      labels,
       datasets: [{
         label: 'Outstanding',
         data: values,

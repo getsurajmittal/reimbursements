@@ -585,6 +585,43 @@ input[type="date"] { min-height: 42px; }
 }
 .chip.is-on { background: var(--brand-soft); border-color: var(--brand); color: var(--brand); font-weight: 600; }
 
+/* --------------------------------------------------------- period bar --- */
+
+.period { position: relative; }
+.period__label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.period__value {
+  font-size: 17px;
+  font-weight: 640;
+  letter-spacing: -0.015em;
+  margin-top: 1px;
+}
+.period__icon { color: var(--text-muted); flex: 0 0 auto; display: grid; place-items: center; }
+.period__icon svg { width: 18px; height: 18px; }
+.period .chip-row { flex-wrap: wrap; }
+
+/* A whole row that behaves as a button - used by the bill-status breakdown. */
+.breakdown-row {
+  width: 100%;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 7px 4px;
+  cursor: pointer;
+  text-align: left;
+  color: inherit;
+}
+.breakdown-row:active { background: var(--surface-2); }
+.breakdown-row svg { color: var(--text-muted); }
+
+/* A card with a coloured edge - set --flag to the accent colour. */
+.card--flag { border-left: 3px solid var(--flag, var(--border)); }
+
 /* --------------------------------------------------------------- chart --- */
 
 .chart-wrap { position: relative; height: 190px; }

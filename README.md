@@ -68,10 +68,14 @@ to jump straight to those bills, an oldest-open-bill warning, a balance-over-
 time chart, and a **live preview when settling up** that tells you which bills
 the amount you're typing will actually clear before you record it.
 
-Also: dark mode (follows your phone, with a manual toggle), a
-"time travel" control to view the ledger as of any past date, status filters
-and CSV exports that now include each bill's paid/outstanding/status columns,
-and the Tailwind CDN dependency dropped in favour of a small self-contained
+**The dashboard is now a reporting period, not a lifetime total.** It opens on
+the current month, with preset buttons (This month / Last month / 3 months /
+This year / All time) and Start and End date boxes for any range you like. See
+"Periods" below for what does and doesn't rescope, and why.
+
+Also: dark mode (follows your phone, with a manual toggle), status filters and
+CSV exports that now include each bill's paid/outstanding/status columns, and
+the Tailwind CDN dependency dropped in favour of a small self-contained
 stylesheet.
 
 ## Overview of what you're setting up
@@ -201,6 +205,34 @@ bills. Every bill, pocket money entry, and payment can still be edited or
 deleted later; the whole allocation simply recomputes from the stored rows, so
 it's always consistent with whatever the data currently says.
 
+### Periods
+
+The dashboard opens on the current month. The preset chips and the Start/End
+date boxes at the top of Home change what you're looking at, and the Bills tab
+follows the same range, so a count on one screen always matches the list on the
+other.
+
+Two kinds of number live on that page, and they behave differently on purpose:
+
+- **Flows** - bills submitted, paid back, pocket money, the bill-status
+  breakdown, both charts. These belong to a period, so they show only what
+  happened between your Start and End dates.
+- **The balance** - what's still owed. This is a running total, so it has no
+  monthly version: "you owed X in March" is meaningless. It stays cumulative
+  and is reported *as at* your End date, and the card says so ("You're owed as
+  at 31 Jul 2026"). Pick 1-30 April and it will tell you the balance stood at
+  zero on 30 April, even though bills came in later.
+
+One consequence worth knowing: **the payment-to-bill matching always runs over
+the full history**, never just the window. A January bill that a February
+payment part-paid still shows as "Part paid" when you're looking at March -
+which is correct, and is why the window narrows what's *reported* rather than
+what's *computed*.
+
+The charts pick their own bucket size from the range: weeks for about a month
+or less, months up to about a year, quarters beyond that. The "Show numbers"
+table always matches whatever buckets the chart is using.
+
 ### Colour choices
 
 The charts use a palette validated for colour-blind separation and contrast
@@ -222,7 +254,8 @@ js/supabaseClient.js        - your project URL + anon key (fill in Step 4)
 js/app.js                   - bootstrap: auth, theme, tab bar, route table
 js/router.js                - tab routing
 js/store.js                 - session state + every Supabase read/write
-js/ledger.js                - the oldest-first allocation engine (all the money logic)
+js/ledger.js                - the oldest-first allocation engine + period scoping (all the money logic)
+js/period.js                - the period presets and their labels
 js/charts.js                - Chart.js wrappers + the validated palette
 js/ui.js                    - reusable HTML components (tiles, pills, rows, meters)
 js/icons.js                 - inline SVG icon set

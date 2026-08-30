@@ -25,7 +25,7 @@ export async function renderPocket() {
 
   let ledger;
   try {
-    ledger = await fetchLedger({ asOf: todayISO() });
+    ledger = await fetchLedger({ to: todayISO() });
   } catch (err) {
     root.innerHTML = errorBox(err.message);
     return;
